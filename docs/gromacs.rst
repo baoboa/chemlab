@@ -11,10 +11,11 @@ this will require us to give parameters on how we want to make the system evolve
 
 chemlab effectively help us to generate in a flexible way a coordinate file for our system, there are multiple ways of doing that, we will just pick one. Read the comments:
 
-    from chemlab import System
-    from chemlab.graphics import display_system
-    from chemlab.data.moldb import water
-    
-    s = System.from_lattice(water, size=4, density=1.0)
-    display_system(s)
+>>> from chemlab.core import System
+>>> from chemlab.graphics import display_system
+>>> from chemlab.data.moldb import water
+
+warning -> from_lattice is not implemented yet !
+>>> s = System.from_lattice(water, size=4, density=1.0)
+>>> display_system(s)
     
