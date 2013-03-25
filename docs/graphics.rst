@@ -22,7 +22,7 @@ create a ``Viewer`` instance and add 3D features to it::
 now let's define a molecule. We can use the `moldb` module to get a
 water template.
 
->>> from chemlab.graphics.renderers import SphereRenderer
+>>> from chemlab.graphics.renderers import AtomRenderer
 >>> from chemlab.data.moldb import water
 >>> ar = v.add_renderer(AtomRenderer, water)
 >>> v.run()
