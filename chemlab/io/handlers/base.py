@@ -1,16 +1,20 @@
 import difflib
 
+class FeatureNotAvailable(Exception):
+    pass
+
 class IOHandler(object):
-    """Generic base class for file readers and writers. The
-    initialization function takes *filename* as input and sets the
-    instance attribute *filename*.
+    """Generic base class for file readers and writers.
+
+    The initialization function takes a file-like object *fd*, as an
+    argument.
     
     Subclasses can extend the methods *__init__*, *read* and *write*
     to implement their reading and writing routines.
     
     **Attributes**
     
-    .. py:attribute:: filename
+    .. py:attribute:: fd
     
     .. py:attribute:: IOHandler.can_read
         
@@ -23,13 +27,18 @@ class IOHandler(object):
         :type: list of str
         
         A list of *features* that IOHandler can write.
+
     """
 
     can_read = []
     can_write = []
     
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self, fd):
+        # TODO: This is a deprecation warning
+        if isinstance(fd, str):
+            raise Exception("IOHandler takes a file-like object as its first argument")
+        
+        self.fd = fd
 
     def read(self, feature, *args, **kwargs):
         """Read and return the feature *feature*. It should raise an
@@ -45,11 +54,11 @@ class IOHandler(object):
         Subclasses can reimplement this method to add functionality::
         
             class XyzIO(IOHandler):
-                can_read = ['geometry']
+                can_read = ['molecule']
         
                 def read(self, feature, *args, **kwargs):
                     self.check_feature(feature, "read")
-                    if feature == 'geometry':
+                    if feature == 'molecule':
                        # Do stuff
                        return geom
         
@@ -67,16 +76,17 @@ class IOHandler(object):
         ::
         
             class XyzIO(IOHandler):
-                can_write = ['geometry']
+                can_write = ['molecule']
         
                 def write(self, feature, value, *args, **kwargs):
                     self.check_feature(feature, "write")
-                    if feature == 'geometry':
+                    if feature == 'molecule':
                        # Do stuff
                        return geom
         
         """
-
+        if 'w' not in self.fd.mode and 'x' not in self.fd.mode:
+            raise Exception("The file is not opened in writing mode. If you're using datafile, add the 'w' option.\ndatafile(filename, 'w')")
         
         self.check_feature(feature, "write")
         
@@ -100,9 +110,9 @@ class IOHandler(object):
             
         if feature not in features:
             matches = difflib.get_close_matches(feature, features)
-            raise ValueError("Feature %s not present in %s. Close matches: %s"
-                             % (feature, str(type(self).__name__),
-                                str(matches)))
+            raise FeatureNotAvailable("Feature %s not present in %s. Close matches: %s"
+                                      % (feature, str(type(self).__name__),
+                                         str(matches)))
 
 def make_ionotavailable(name, msg, can_read = [], can_write = []):
     def read(self, feature):

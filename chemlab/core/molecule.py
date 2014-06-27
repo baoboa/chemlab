@@ -3,9 +3,15 @@ from collections import Counter
 import numpy as np
 from copy import copy
 
-from ..data import symbols
-from ..data import masses
+from ..libs.ckdtree import cKDTree
+from ..db import ChemlabDB
+cdb = ChemlabDB()
 
+masses = cdb.get("data", "massdict")
+
+from .attributes import MArrayAttr, MField
+from .fields import AtomicField, FieldRequired
+from .serialization import data_to_json, json_to_data
 
 class Atom(object):
     '''
@@ -52,6 +58,12 @@ class Atom(object):
     
        Mass in atomic mass units.
     
+    .. py:attribute:: charge
+    
+       :Type: float
+    
+       Charge in electron charge units.
+
     .. py:attribute:: export
     
        :Type: dict
@@ -71,7 +83,11 @@ class Atom(object):
     
     '''
 
-    fields = ("type", "r", 'export', "mass")
+    fields = [AtomicField("type", default=False),
+              AtomicField("r", default=lambda at: np.zeros(3,dtype=np.float)),
+              AtomicField('export', default=lambda at: {}),
+              AtomicField('mass', default=lambda at: masses[at.type]),
+              AtomicField('charge', default=lambda at: 0.0)]
     
     def __init__(self, type, r, export=None):
         self.type = type
@@ -83,8 +99,9 @@ class Atom(object):
         else:
             self.export = {}
 
-        self.atno = symbols.symbol_list.index(type.lower()) + 1
-        self.mass = masses.typetomass[type]
+        #self.atno = symbols.symbol_list.index(type.lower()) + 1
+        self.mass = masses[type]
+        self.charge = 0.0
 
     @classmethod
     def from_fields(cls, **kwargs):
@@ -101,21 +118,34 @@ class Atom(object):
         '''
         self = cls.__new__(cls)
         
-        if not (set(Atom.fields) <= set(kwargs)):
-            raise Exception('Not all fields are passed to make an Atom %s missing' %
-                              (set(Atom.fields) - set(kwargs)))
-        for f in Atom.fields:
-            setattr(self,f, kwargs[f])
+        for f in cls.fields:
+            val = kwargs.get(f.name, None)
+            if val == None:
+                if f.default == False:
+                    raise FieldRequired('{} field is required'.format(f.name))
+                else:
+                    f.set(self, f.default(self))
+            else:
+                f.set(self, val)
         
         return self
-            
+
+    def astype(self, cls):
+        orig_cls = type(self)
+        kwargs = dict((f.name, copy(f.get(self))) for f in orig_cls.fields)
+        return cls.from_fields(**kwargs)
+        
     def copy(self):
         '''Return a copy of the original Atom.
         '''
-        return Atom(self.type, np.copy(self.r), self.id, export=self.export.copy())
+
+        cls = type(self)
+        kwargs = dict((f.name, copy(f.get(self))) for f in cls.fields)
+        return cls.from_fields(**kwargs)
 
     def __repr__(self):
         return "atom({})".format(self.type)
+
 
 
 
@@ -156,13 +186,21 @@ class Molecule(object):
     
        Array of masses.
     
-    .. py:attribute:: atom_export_array {numpy.array[N] of dict}
+    .. py:attribute:: charge_array
+
+       :type: np.ndarray(N, dtype=float)
+       :derived from: Atom
+    
+       Array of the charges present on the atoms.
+    
+    .. py:attribute:: atom_export_array
     
        :type: np.ndarray(N, dtype=object) *array of dicts*
        :derived from: Atom
     
        Array of `Atom.export` dicts.
     
+       
     .. py:attribute:: n_atoms
     
        :type: int
@@ -174,6 +212,13 @@ class Molecule(object):
        :type: dict
     
        Export information for the whole Molecule.
+    
+    .. py:attribute:: bonds
+
+       :type: np.ndarray((NBONDS,2), dtype=int)
+    
+       A list containing the indices of the atoms connected by a bond.
+       Example: ``[[0 1] [0 2] [3 4]]``
     
     .. py:attribute:: mass
        
@@ -191,43 +236,64 @@ class Molecule(object):
     
     .. py:attribute:: formula
     
-       :type: float
+       :type: str
     
        The brute formula of the Molecule. i.e. ``"H2O"``
        
     '''
     # Association between the Molecule array attribute and the atom one
-    atom_inherited = {'r_array': ('r', np.float64),
-                      'type_array': ('type', object),
-                      'm_array': ('mass', np.float64),
-                      'atom_export_array': ('export', object)}
+    attributes = [MArrayAttr('type_array', 'type', object, default=False),
+                  MArrayAttr('r_array', 'r', np.float, default=lambda mol: np.zeros((mol.n_atoms, 3), np.float)),
+                  MArrayAttr('m_array', 'mass', np.float, default=lambda mol: np.array([masses[t] for t in mol.type_array])),
+                  MArrayAttr('atom_export_array', 'export', object, default=lambda mol: np.array([{} for i in range(mol.n_atoms)])),
+                  MArrayAttr('charge_array', 'charge', object, default=lambda mol: np.zeros(mol.n_atoms, np.float)),
+                  ]
     
-    fields = ('export',)
+    fields = [
+        MField('export', object, default=lambda mol: {}),
+        MField('bonds', object, default=lambda mol: np.array([], dtype=object)),
+        MField('bond_orders', int, default=lambda mol: np.array([1]*(len(mol.bonds))))
+    ]
+    
     derived = ('formula',)
     
-    def __init__(self, atoms, export=None):
+    def __init__(self, atoms, bonds=None, export=None):
         self.n_atoms = len(atoms)
-        
-        for arr_name, (field_name, dtyp) in Molecule.atom_inherited.iteritems():
-            setattr(self, arr_name,
-                    np.array([getattr(a, field_name) for a in atoms], dtype=dtyp))
+
+        for attr in self.attributes:
+            setattr(self, attr.name,
+                    np.array([getattr(a, attr.fieldname)
+                              for a in atoms], dtype=attr.dtype))
             # Example:
             # self.r_array = np.array([a.r for a in atoms], dtype=np.float64)
-        
+
         # Extra data for exporting reasons
         if export:
             self.export = export
         else:
             self.export = {}
-            
+
+        if bonds is None:
+            self.bonds = np.array([], dtype='int')
+        else:
+            self.bonds = np.array(bonds, dtype='int')
+
     def move_to(self, r):
         '''Translate the molecule to a new position *r*.
         '''
         dx = r - self.r_array[0]
         self.r_array += dx
 
-            
+    @property
+    def bonds(self):
+        # We need 
+        return self._bonds
         
+    @bonds.setter
+    def bonds(self, value):
+        self.bond_orders = np.ones(len(value), dtype='int')
+        self._bonds = value
+    
     @classmethod
     def from_arrays(cls, **kwargs):
         '''Create a Molecule from a set of Atom-derived arrays. 
@@ -246,30 +312,51 @@ class Molecule(object):
         
         '''
         # Test for required fields:
-        if not (set(('r_array', 'type_array')) <= set(kwargs.keys())):
-            raise Exception('r_array and type_array are required arguments.')
+        if 'type_array' not in kwargs:
+            raise Exception('type_array is a required argument')
         
-        inst = cls.__new__(Molecule)
+        inst = cls.__new__(cls)
+        inst.n_atoms = len(kwargs['type_array'])
         
-        # Special cases -- default values
-        if kwargs.get('m_array', None) == None:
-            kwargs['m_array'] = np.array([masses.typetomass[t] for t in kwargs['type_array']])            
-        if kwargs.get('atom_export_array', None) == None:
-            kwargs['atom_export_array'] = np.array([{} for t in kwargs['type_array']])     
+        for attr in cls.attributes:
+            # Get the value from the passed arguments
+            val = kwargs.get(attr.name, None)
             
-        for arr_name, (field_name, dtyp) in Molecule.atom_inherited.items():
-            setattr(inst, arr_name, kwargs[arr_name])
+            if val == None:
+                # If the value is None set the attribute to its
+                # default value
+                attr.set(inst, attr.default(inst))
+            else:
+                # Set the attribute to the passed value
+                attr.set(inst, val)
         
-                
-        # Special Case, default value
-        if kwargs.get('export', None) is None:
-            kwargs['export'] = {}
-                
-        for field in Molecule.fields:
-            setattr(inst, field, kwargs[field])
-
-        inst.n_atoms = len(inst.r_array)
+        for field in cls.fields:
+            val = kwargs.get(field.name, None)
+            if val == None:
+                # If the value is None set the field to its
+                # default value
+                field.set(inst, field.default(inst))
+            else:
+                # Set the attribute to the passed value
+                field.set(inst, val)
+        
         return inst
+
+    def astype(self, cls):
+        orig_cls = type(self)
+        kwargs = {}
+        
+        
+        # Attributes
+        for attr in orig_cls.attributes:
+            kwargs[attr.name] = attr.get(self)
+        
+        # Fields
+        for field in orig_cls.fields:
+            kwargs[field.name] = field.get(self)
+
+        return cls.from_arrays(**kwargs)
+        
         
     @property
     def mass(self):
@@ -283,30 +370,90 @@ class Molecule(object):
     def geometric_center(self):
         return self.r_array.sum(axis=0)/len(self.r_array)
         
-    
+
+    def tojson(self):
+        """Return a json string representing the Molecule. This is
+        useful for serialization.
+
+        """
+        return data_to_json(self.todict())
+
+    @classmethod
+    def from_json(cls, string):
+        return cls.from_arrays(**json_to_data(string))
+        
+    def todict(self):
+        cls = type(self)
+        kwargs = {}
+        # Attributes
+        for attr in cls.attributes:
+            kwargs[attr.name] = copy(attr.get(self))
+
+        # Fields
+        for field in cls.fields:
+            kwargs[field.name] = copy(field.get(self))
+
+        return kwargs
+        
+        
     def __repr__(self):
-        return "molecule({})".format(self._det_formula())
+        return "molecule({})".format(self.formula)
     
     def copy(self):
         '''Return a copy of the molecule instance
 
         '''
-        kwargs = {}
+        cls = type(self)
         
-        # Arrays
-        for arr_name, (field_name, dtyp) in Molecule.atom_inherited.items():
-            kwargs[arr_name] = getattr(self, arr_name).copy()
+        kwargs = self.todict()
         
-        # Fields
-        for field in Molecule.fields:
-            kwargs[field] = copy(getattr(self, field))
+        for k, val in kwargs.items():
+            kwargs[k] = copy(val)
+            
+        return cls.from_arrays(**kwargs)
+        
+    def guess_bonds(self):
+        """Guess the molecular bonds by using covalent radii
+        information.
 
-        return Molecule.from_arrays(**kwargs)
+        """
+        self.bonds = guess_bonds(self.r_array, self.type_array)
         
-    def _det_formula(self):
+    @property
+    def n_bonds(self):
+        return len(self.bonds)
+        
+    @property
+    def formula(self):
         return make_formula(self.type_array)
-    formula = property(_det_formula)
 
+# Those functions have a separate life
+def guess_bonds(r_array, type_array):
+    covalent_radii = cdb.get('data', 'covalentdict')
+    MAXRADIUS = 0.3
+    
+    # Find all the pairs
+    ck = cKDTree(r_array)
+    pairs = ck.query_pairs(MAXRADIUS)
+    
+    bonds = []
+    for i,j in pairs:
+        threshold = 0.01
+        a, b = covalent_radii[type_array[i]], covalent_radii[type_array[j]]
+        rval = a + b
+        
+
+        thr_a = rval - threshold
+        thr_b = rval + threshold 
+        
+        #thr_a2 = thr_a * thr_a
+        thr_b2 = thr_b * thr_b
+        dr2  = ((r_array[i] - r_array[j])**2).sum()
+        
+        if dr2 < thr_b2:
+            bonds.append((i, j))
+    return np.array(bonds)
+    
 def make_formula(elements):
     c = Counter(elements)
     formula = ''

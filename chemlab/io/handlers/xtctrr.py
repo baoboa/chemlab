@@ -49,25 +49,36 @@ class XtcIO(IOHandler):
 
        positions is a *list* of ``np.ndarray(n_atoms, 3)``.
     
-       
+    .. method:: read("boxes")
+    
+       After reading the "trajectory" feature you can call
+       `read("boxes")` that will return a list of *box_vectors*
+       correspoiding to each frame.
+
     '''
-    can_read = ['trajectory']
+    can_read = ['trajectory', 'boxes']
     can_write = []
     
-    def __init__(self, filename):
-        self.filename = filename
-    
-    def read(self, feature):
+    def read(self, feature, **kwargs):
         import time
         t0 = time.time()
         
         if feature == 'trajectory':
+            skipframes = kwargs.get("skip", None)
+            
+            
             times = []
-            xtcreader = XTCReader(self.filename)
+            xtcreader = XTCReader(self.fd.name)
             frames = []
+            self._boxes = []
 
-            for frame in xtcreader:
-                frames.append(frame.coords)
-                times.append(frame.time)
+            for i, frame in enumerate(xtcreader):
+                if skipframes is None or i%skipframes == 0:
+                    frames.append(frame.coords)
+                    times.append(frame.time)
+                    self._boxes.append(frame.box)
+                
             return times, frames
             
+        if feature == 'boxes':
+            return self._boxes

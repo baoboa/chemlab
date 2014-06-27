@@ -20,11 +20,10 @@ class XyzIO(IOHandler):
     can_read = ['molecule']
     can_write = ['molecule']
     
-    def __init__(self, filename):
-        self.filename = filename
-        
     def read(self, feature):
-        lines = open(self.filename).readlines()
+        self.check_feature(feature, "read")
+        
+        lines = [line.decode('utf-8') for line in self.fd.readlines()]
         
         num = int(lines[0])
         title = lines[1]
@@ -47,6 +46,8 @@ class XyzIO(IOHandler):
             
             
     def write(self, feature, mol):
+        self.check_feature(feature, "write")
+        
         lines = []
         if feature == 'molecule':
             lines.append(str(mol.n_atoms))
@@ -56,5 +57,4 @@ class XyzIO(IOHandler):
                 lines.append('    %s       %.6f      %.6f      %.6f' %
                              (t, x*10, y*10, z*10))
             
-            open(self.filename, 'w').write('\n'.join(lines))
-        
+            self.fd.write('\n'.join(lines))

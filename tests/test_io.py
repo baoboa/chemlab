@@ -3,6 +3,8 @@ from chemlab.io import datafile, add_default_handler
 
 from chemlab.io.handlers import GromacsIO
 from chemlab.io.handlers import EdrIO
+from nose.tools import assert_raises
+
 import numpy as np
     
 def test_datafile():
@@ -16,16 +18,17 @@ def test_read_pdb():
     s = df.read('system')
     
 def test_write_pdb():
-    water = Molecule([Atom('O', [0.0, 0.0, 0.0], export={'grotype': 'OW'}),
-                      Atom('H', [0.1, 0.0, 0.0], export={'grotype': 'HW1'}),
-                      Atom('H', [-0.03333, 0.09428, 0.0], export={'grotype': 'HW2'})],
+    water = Molecule([Atom('O', [0.0, 0.0, 0.0], export={'pdb.type': 'O'}),
+                      Atom('H', [0.1, 0.0, 0.0], export={'pdb.type': 'H'}),
+                      Atom('H', [-0.03333, 0.09428, 0.0], export={'pdb.type': 'H'})],
                       export={'groname': 'SOL'})
 
-    sys = System.empty(200, 3*200, boxsize = 2.0)
+    sys = System.empty(200, 3*200, box_vectors = np.eye(3) * 2.0)
     for i in range(200):
+        water.r_array += 0.1
         sys.add(water.copy())
     
-    df = datafile('/tmp/dummy.gro')
+    df = datafile('/tmp/dummy.pdb', mode="w")
     df.write("system", sys)
     
 def test_read_gromacs():
@@ -39,12 +42,16 @@ def test_write_gromacs():
                       Atom('H', [-0.03333, 0.09428, 0.0], export={'grotype': 'HW2'})],
                       export={'groname': 'SOL'})
 
-    sys = System.empty(200, 3*200, boxsize = 2.0)
+    sys = System.empty(200, 3*200, box_vectors = np.eye(3)*2.0)
     for i in range(200):
         sys.add(water.copy())
     
-    df = datafile('/tmp/dummy.gro')
+    df = datafile('/tmp/dummy.gro', mode="w")
     df.write('system', sys)
+    
+    with assert_raises(Exception):
+        df = datafile('/tmp/dummy.gro')
+        df.write('system', sys)
     
     df = datafile('/tmp/dummy.gro')
     sread = df.read('system')
@@ -53,7 +60,7 @@ def test_write_gromacs():
     
 def test_read_edr():
     df = datafile('tests/data/ener.edr')
-    df.read('frames')
+    #df.read('frames')
     
     dt, temp = df.read('quantity', 'Temperature')
     unit = df.read('units', 'Temperature')
@@ -68,12 +75,33 @@ def test_read_xyz():
     mol1 = df.read('molecule')
     
     
-    df = datafile('/tmp/t.xyz')
+    df = datafile('/tmp/t.xyz', mode="w")
     df.write('molecule', mol1)
     
+    df = datafile('/tmp/t.xyz', mode="rb")
     mol2 = df.read('molecule')
     
     assert np.allclose(mol1.r_array, mol2.r_array)
     assert all(mol1.type_array == mol2.type_array)
     
+    
+def test_read_mol():
+    df = datafile('tests/data/benzene.mol')
+    mol1 = df.read('molecule')
+    
+def test_read_xtc():
+    df = datafile('tests/data/trajout.xtc')
+    t, coords = df.read('trajectory')
+    box = df.read('boxes')
+
+def test_read_cml():
+    df = datafile('tests/data/mol.cml')
+    mol = df.read("molecule")
+
+def test_write_cml():
+    df = datafile('tests/data/mol.cml')
+    mol = df.read("molecule")
+    
+    df = datafile('/tmp/sadf.cml', 'w')
+    df.write('molecule', mol)
     

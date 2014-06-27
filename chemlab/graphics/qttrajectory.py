@@ -4,7 +4,9 @@ from PySide.QtCore import Qt
 
 import os
 
-from .qtviewer import app, GLWidget
+from .qtviewer import app
+from .qchemlabwidget import QChemlabWidget
+
 from .. import resources
 
 import numpy as np
@@ -90,39 +92,36 @@ class AnimationSlider(QtGui.QSlider):
                                              pos-slider_min, slider_max-slider_min,
                                              opt.upsideDown)
 
-    
-class QtTrajectoryViewer(QMainWindow):
-    
-    def __init__(self):
-        super(QtTrajectoryViewer, self).__init__()
+class TrajectoryControls(QtGui.QWidget):
+    play = QtCore.Signal()
+    pause = QtCore.Signal()
 
-        self.controls = QDockWidget()
+    frame_changed = QtCore.Signal(int)
+    speed_changed = QtCore.Signal()
+    
+    def __init__(self, parent=None):
+        super(TrajectoryControls, self).__init__(parent)
 
-        
+        self.current_index = 0
+        self.max_index = 0
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self.do_update)
         
-        # Eliminate the dock titlebar
-        title_widget = QtGui.QWidget(self)
-        self.controls.setTitleBarWidget(title_widget)
+        containerhb2 = QtGui.QWidget(parent)
         
-        vb = QtGui.QVBoxLayout()
         hb = QtGui.QHBoxLayout() # For controls
-        
-        containerhb2 = QtGui.QWidget(self)
-        
+        vb = QtGui.QVBoxLayout()
+
         hb2 = QtGui.QHBoxLayout() # For settings
+        
+        vb.addWidget(containerhb2)
+        vb.addLayout(hb)
+        
         containerhb2.setLayout(hb2)
         containerhb2.setSizePolicy(QtGui.QSizePolicy.Minimum,
                                    QtGui.QSizePolicy.Minimum)
         
         
-
-        vb.addWidget(containerhb2)
-        vb.addLayout(hb)
-        self.vb = vb
-        
-        # Settings buttons
         hb2.addWidget(QtGui.QLabel('Speed'))
         self._speed_slider = QtGui.QSlider(Qt.Horizontal)
         self._speed_slider.resize(100, self._speed_slider.height())
@@ -134,22 +133,14 @@ class QtTrajectoryViewer(QMainWindow):
         self.speeds.reverse()
         self._speed_slider.setMaximum(10)
         self._speed_slider.setValue(7)
-        self._speed_slider.valueChanged.connect(self.on_speed_changed)
-        
+        #self._speed_slider.valueChanged.connect(self.on_speed_changed)
         hb2.addWidget(self._speed_slider)
         hb2.addStretch(1)
-        
-        wrapper = QtGui.QWidget()
-        wrapper.setLayout(vb)
 
-        # Molecular viewer
-        self.widget = GLWidget(self)
-        self.setCentralWidget(self.widget)
-        
+
         # Control buttons
         self.play_stop = PlayStopButton()
         hb.addWidget(self.play_stop)
-
         
         self.slider = AnimationSlider()
         hb.addWidget(self.slider, 2)
@@ -170,43 +161,30 @@ class QtTrajectoryViewer(QMainWindow):
         
         hb.addWidget(self._settings_button)
         
-        self.controls.setWidget(wrapper)
-        self.addDockWidget(Qt.DockWidgetArea(Qt.BottomDockWidgetArea),
-                           self.controls)
+        self.play_stop.setFocus()
+        vb.setSizeConstraint(QtGui.QLayout.SetMaximumSize)
+        containerhb2.setVisible(False)
         
-
         self._settings_pan = containerhb2
-        self.show()
-
+        self.setLayout(vb)
         
         self.speed = self.speeds[self._speed_slider.value()]
+
         # Connecting all the signals
         self.play_stop.play.connect(self.on_play)
         self.play_stop.pause.connect(self.on_pause)
         
         self.slider.valueChanged.connect(self.on_slider_change)
         self.slider.sliderPressed.connect(self.on_slider_down)
-
         self.play_stop.setFocus()
-        vb.setSizeConstraint(QtGui.QLayout.SetMaximumSize)
-        containerhb2.setVisible(False)
         
-    def set_ticks(self, number):
-        self.max_index = number
-        self.current_index = 0
-        
-        self.slider.setMaximum(self.max_index-1)
-        self.slider.setMinimum(0)
-        self.slider.setPageStep(1)
-        
-    def set_text(self, text):
-        self.timelabel.setText(self._label_tmp.format(text))
+    def _toggle_settings(self):
+        self._settings_pan.setVisible(not self._settings_pan.isVisible())
         
     def on_play(self):
         if self.current_index == self.max_index - 1:
             # Restart
             self.current_index = 0
-
 
         self._timer.start(self.speed)
 
@@ -217,8 +195,18 @@ class QtTrajectoryViewer(QMainWindow):
             self.play_stop.set_pause()
         else:
             self.current_index += 1
+            # This triggers on_slider_change
             self.slider.setSliderPosition(self.current_index)
             
+    def next(self, skip=1):
+        if self.current_index + skip >= self.max_index - 1:
+            raise StopIteration
+        else:
+            self.slider.setValue(self.current_index + skip)
+            # The current_index is changes
+        
+    def goto_frame(self, framenum):
+        self.slider.setValue(framenum)
         
     def on_pause(self):
         self._timer.stop()
@@ -226,7 +214,7 @@ class QtTrajectoryViewer(QMainWindow):
     def on_slider_change(self, value):
         #print 'Slider moved', value
         self.current_index = value
-        self._update_function(self.current_index)
+        self.frame_changed.emit(self.current_index)
         
     def on_slider_down(self):
         self._timer.stop()
@@ -237,26 +225,169 @@ class QtTrajectoryViewer(QMainWindow):
         if self._timer.isActive():
             self._timer.stop()
             self._timer.start(self.speed)
+    
+    def set_ticks(self, number):
+        '''Set the number of frames to animate.
+
+        '''
+        self.max_index = number
+        self.current_index = 0
+        self.slider.setMaximum(self.max_index-1)
+        self.slider.setMinimum(0)
+        self.slider.setPageStep(1)
+
+    def set_time(self, t):
+        stime = format_time(t)
+        label_tmp = '<b><FONT SIZE=30>{}</b>'
+        self.timelabel.setText(label_tmp.format(stime))
         
+
+class QtTrajectoryViewer(QMainWindow):
+    """Bases: `PySide.QtGui.QMainWindow`
+
+    Interface for viewing trajectory.
+
+    It provides interface elements to play/pause and set the speed of
+    the animation.
+    
+    **Example**
+
+    To set up a QtTrajectoryViewer you have to add renderers to the
+    scene, set the number of frames present in the animation by calling
+    ;py:meth:`~chemlab.graphics.QtTrajectoryViewer.set_ticks` and
+    define an update function.
+
+    Below is an example taken from the function
+    :py:func:`chemlab.graphics.display_trajectory`::
+    
+        from chemlab.graphics import QtTrajectoryViewer
+        
+        # sys = some System
+        # coords_list = some list of atomic coordinates
+        
+        v = QtTrajectoryViewer()
+        sr = v.add_renderer(AtomRenderer, sys.r_array, sys.type_array,
+                            backend='impostors')
+        br = v.add_renderer(BoxRenderer, sys.box_vectors)
+        
+        v.set_ticks(len(coords_list))
+        
+        @v.update_function
+        def on_update(index):
+            sr.update_positions(coords_list[index])
+            br.update(sys.box_vectors)
+            v.set_text(format_time(times[index]))
+            v.widget.repaint()
+     
+        v.run()
+    
+    .. warning:: Use with caution, the API for this element is not
+                 fully stabilized and may be subject to change.
+
+    """
+
+    def __init__(self):
+        super(QtTrajectoryViewer, self).__init__()
+        
+        self.controls = QDockWidget()
+        
+        # Eliminate the dock titlebar
+        title_widget = QtGui.QWidget(self)
+        self.controls.setTitleBarWidget(title_widget)
+        
+        traj_controls = TrajectoryControls(self)
+        self.controls.setWidget(traj_controls)
+        
+        # Molecular viewer
+        self.widget = QChemlabWidget(self)
+        self.setCentralWidget(self.widget)
+        self.addDockWidget(Qt.DockWidgetArea(Qt.BottomDockWidgetArea),
+                           self.controls)
+
+        self.show()
+        # Replace in this way
+        
+        traj_controls.frame_changed.connect(self.on_frame_changed)
+        self.traj_controls = traj_controls
+
+    def set_ticks(self, number):
+        self.traj_controls.set_ticks(number)
+        
+    def set_text(self, text):
+        '''Update the time indicator in the interface.
+
+        '''
+        self.traj_controls.timelabel.setText(self.traj_controls._label_tmp.format(text))
+
+    def on_frame_changed(self, index):
+        self._update_function(index)
+
+    def on_pause(self):
+        self._timer.stop()
+
+    def on_slider_change(self, value):
+        self.current_index = value
+        self._update_function(self.current_index)
+
+    def on_slider_down(self):
+        self._timer.stop()
+        self.play_stop.set_pause()
+
+    def on_speed_changed(self, index):
+        self.speed = self.speeds[index]
+        if self._timer.isActive():
+            self._timer.stop()
+            self._timer.start(self.speed)
+
     def add_renderer(self, klass, *args, **kwargs):
+        '''The behaviour of this function is the same as
+        :py:meth:`chemlab.graphics.QtViewer.add_renderer`.
+
+        '''
         renderer = klass(self.widget, *args, **kwargs)
         self.widget.renderers.append(renderer)
         return renderer
-    
+
     def add_ui(self, klass, *args, **kwargs):
+        '''Add an UI element for the current scene. The approach is
+        the same as renderers.
+
+        .. warning:: The UI api is not yet finalized
+
+        '''
+
         ui = klass(self.widget, *args, **kwargs)
         self.widget.uis.append(ui)
         return ui
 
+    def add_post_processing(self, klass, *args, **kwargs):
+        pp = klass(self.widget, *args, **kwargs)
+        self.widget.post_processing.append(pp)
+        return pp
+
     def run(self):
         app.exec_()
+
+    def update_function(self, func, frames=None):
+        '''Set the function to be called when it's time to display a frame.
+
+        *func* should be a function that takes one integer argument that
+        represents the frame that has to be played::
+
+            def func(index):
+                # Update the renderers to match the
+                # current animation index
+
+        '''
+        # Back-compatibility
+        if frames is not None:
+            self.traj_controls.set_ticks(frames)
         
-    def update_function(self, func):
         self._update_function = func
 
     def _toggle_settings(self):
         self._settings_pan.setVisible(not self._settings_pan.isVisible())
-        
+
 def format_time(t):
     if 0.0 <= t < 100.0:
         return '%.1f ps' % t
@@ -268,7 +399,7 @@ def format_time(t):
         return '%.1f ms' % (t/1e9)
     elif 1.0e12 <= t < 1.0e15:
         return '%.1f s' % (t/1e12)
-        
+
 if __name__ == '__main__':
     
     

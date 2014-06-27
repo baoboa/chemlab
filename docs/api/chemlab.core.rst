@@ -26,10 +26,10 @@ The System class
 Routines to manipulate Systems
 ------------------------------
 
-.. autofunction:: chemlab.core.select_atoms
+.. autofunction:: chemlab.core.subsystem_from_molecules
 		  
 
-.. autofunction:: chemlab.core.extract_subsystem
+.. autofunction:: chemlab.core.subsystem_from_atoms
 
 
 .. autofunction:: chemlab.core.merge_systems
@@ -39,3 +39,5 @@ Routines to create Systems
 --------------------------
 
 .. autofunction:: chemlab.core.crystal
+
+.. autofunction:: chemlab.core.random_lattice_box

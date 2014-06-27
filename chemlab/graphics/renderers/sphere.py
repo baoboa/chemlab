@@ -5,17 +5,37 @@ from .triangles import TriangleRenderer
 
 
 class SphereRenderer(AbstractRenderer):
-    def __init__(self, viewer, poslist, radiuslist, colorlist):
-        '''Renders a set of spheres. The positions of the spheres
-        are determined from *poslist* which is a list of xyz coordinates,
-        the respective radii are in the list *radiuslist* and colors
-        *colorlist* as rgba where each one is in the range [0, 255].
+    '''Renders a set of spheres.
 
-        This renderer uses vertex array objects to deliver optimal
-        performance.
-        '''
+    The method used by this renderer is approximating a sphere by
+    using triangles. While this is reasonably fast, for best
+    performance and animation you should use
+    :py:class:`~chemlab.graphics.renderers.SphereImpostorRenderer`
+    
+    .. image:: /_static/sphere_renderer.png
+    
+    **Parameters**
+
+    widget:
+        The parent ``QChemlabWidget``
+    
+    poslist: np.ndarray((NSPHERES, 3), dytpe=float)
+        A position array. While there aren't dimensions, in the context
+        of chemlab 1 unit of space equals 1 nm.
+    
+    radiuslist: np.ndarray(NSPHERES, dtype=float)
+        An array with the radius of each sphere.
+    
+    colorlist: np.ndarray(NSPHERES, 4) or list of tuples
+        An array with the color of each sphere. Suitable colors are
+        those found in ``chemlab.graphics.colors`` or any
+        tuple with values (r, g, b, a) in the range [0, 255]
+    
+    '''
+
+    def __init__(self, widget, poslist, radiuslist, colorlist, shading='phong'):
         
-        self.viewer = viewer
+        self.viewer = widget
 
         self.poslist = poslist
         self.radiuslist = radiuslist
@@ -57,21 +77,24 @@ class SphereRenderer(AbstractRenderer):
         colors_ = np.repeat(colorlist, verts_one_sphere/3, axis=0)
 
 
-        self.tr = TriangleRenderer(viewer, vertices.flatten(), normals.flatten(), colors_)
+        self.tr = TriangleRenderer(widget, vertices.flatten(),
+                                   normals.flatten(), colors_, shading=shading)
     
     def draw(self):
         self.tr.draw()
 
-    def update_positions(self, r_array):
+    def update_positions(self, positions):
+        '''Update the sphere positions.
+        '''
         sphs_verts = self.sphs_verts_radii.copy()
-        sphs_verts += r_array.reshape(self.n_spheres, 1, 3)
+        sphs_verts += positions.reshape(self.n_spheres, 1, 3)
 
         self.tr.update_vertices(sphs_verts)
-        self.poslist = r_array
+        self.poslist = positions
         
     def update_colors(self, colorlist):
         
-        self.tr.update_colors(colors_)
+        self.tr.update_colors(colorlist)
 
 from ..transformations import distance, normalized
 
@@ -108,9 +131,9 @@ class Sphere(object):
         dtheta = 2*np.pi/self.meridians
         
         self.vertices.append(tip)
-        for j in xrange(1, self.parallels):
+        for j in range(1, self.parallels):
             point_z = self.radius*np.cos(dphi*j)
-            for i in xrange(self.meridians+1):
+            for i in range(self.meridians+1):
                 point_x = np.sin(dphi*j)*np.cos(i*dtheta)*self.radius
                 point_y = np.sin(dphi*j)*np.sin(i*dtheta)*self.radius
                 self.vertices.append(np.array([point_x, point_y, point_z]))
@@ -133,15 +156,15 @@ class Sphere(object):
         m = self.meridians
         
         # Cap of the sphere
-        cap_i = [np.array([0, 1, 2]) + np.array([0, 1, 1])*i for i in xrange(m)] # Up to the last point minus 1
+        cap_i = [np.array([0, 1, 2]) + np.array([0, 1, 1])*i for i in range(m)] # Up to the last point minus 1
         cap_i = np.array(cap_i).flatten()
         indexed = cap_i
         
         # Body of the sphere
-        for k in xrange(self.parallels-2):
+        for k in range(self.parallels-2):
             offset = 1 + k*(m+1)
             body_0 = offset + np.array([0, m+1, 1, 1, m + 1, m + 2]) # first two triangles
-            body_i = np.concatenate([body_0 + i for i in xrange(m)])
+            body_i = np.concatenate([body_0 + i for i in range(m)])
             indexed = np.concatenate((indexed, body_i))
         
         # Bottom of the sphere
@@ -150,7 +173,7 @@ class Sphere(object):
         last = len(self.vertices) - 1
         bot_i = [np.array([last, 1 + offset, 2 + offset]) +
                  np.array([0, 1, 1])*i for i
-                 in xrange(m)]
+                 in range(m)]
         indexed = np.concatenate((indexed, np.array(bot_i).flatten()))
         self.tri_vertex = self.vertices[indexed].flatten()
         self.tri_normals = self.normals[indexed].flatten()

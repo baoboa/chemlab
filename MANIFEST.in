@@ -1,7 +1,12 @@
 include distribute_setup.py Makefile COPYING MANIFEST.in requirements.txt
-recursive-include chemlab/graphics/renderers/shaders *.vert *.frag
 
-graft chemlab/data
+recursive-include chemlab *.dat *.txt *.json *.pxd *.vert *.frag
+recursive-exclude __pycache__
+
+include chemlab/libs/pyxdr/*.h
+include chemlab/libs/pyxdr/*.pxd
+
+graft chemlab/db/localdb
 graft chemlab/resources
 graft tests/data
 graft docs
